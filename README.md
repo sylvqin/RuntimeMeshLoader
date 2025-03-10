@@ -1,10 +1,8 @@
 RuntimeMeshLoader
 ==================
-A pluging for Unreal Engine 4 and Unreal Engine 5, which allows to import meshes during runtime.
+A plugin for Unreal Engine 5.5, which allows to import meshes during runtime.
 
-This is a fork of the original [RuntimeMeshLoader repository](https://github.com/GameInstitute/RuntimeMeshLoader).
-
-Additionally, functiones were added to import and apply textures for the meshes.
+This is a fork of [Chrizey91's project](https://github.com/Chrizey91/RuntimeMeshLoader) which is a fork of [RuntimeMeshLoader repository](https://github.com/GameInstitute/RuntimeMeshLoader).
 
 RuntimeMeshLoader (RML) uses [Assimp](https://github.com/assimp/assimp) as a third-party library to handle most of the import-stuff.
  
@@ -15,14 +13,18 @@ RuntimeMeshLoader (RML) uses [Assimp](https://github.com/assimp/assimp) as a thi
 * [How-to](#how-to)
 * [Limitations](#limitations)
 
-
 ## Supported operating systems
-Currently, Windows (x64) as well as Linux (Ubuntu 20) have been verified.
+Currently, Windows (x64) has been verified (used to work on Linux according to @Chrizey91)
 
 ## Supported Unreal Enginge versions
-The Plugin was tested under Unreal Engine v. 4.25.3 as well as version 5 (Early Access). However, any modern version of Unreal Engine should be compatible with it.
+The Plugin was tested under Unreal Engine 5.5. 
 
-## Installation
+
+(this is from the old repo)
+
+
+## Installation 
+
 Download this repository, by clicking on the green `Code`-Button in the upper right hand corner and select `Download ZIP`.
 
 In your Unreal Enginge project open the `Plugins` directory. If it does not exist, simply create a new folder in the root directory of your project and call it `Plugins`.

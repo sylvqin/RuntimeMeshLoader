@@ -2,6 +2,8 @@
 
 
 #include "MeshLoader.h"
+#include "RuntimeMeshLoader.h"
+#include "Interfaces/IPluginManager.h"
 
 #include <assimp/Importer.hpp>
 #include <assimp/scene.h>
@@ -9,10 +11,27 @@
 
 #include "Modules/ModuleManager.h"
 #include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
 #include "IImageWrapper.h"
-#include "Runtime/ImageWrapper/Public/IImageWrapperModule.h"
+#include "IImageWrapperModule.h"
 #include "HAL/FileManager.h"
 #include "HAL/FileManagerGeneric.h"
+#include "Engine/Texture2D.h"
+#include "Engine/TextureDefines.h"
+#include "RHI.h"
+#include "RenderCore.h"
+
+// TexturePlatformData.h has moved in UE 5.5
+#if WITH_UE_5_5
+#include "TextureResource.h"
+#include "RenderUtils.h"
+#else
+#if WITH_UE_5_0
+#include "TextureResource.h"
+#include "RenderUtils.h"
+#include "Engine/TexturePlatformData.h"
+#endif
+#endif
 
 FMeshData ProcessMesh(aiMesh* Mesh, const aiScene* Scene)
 {
@@ -20,18 +39,26 @@ FMeshData ProcessMesh(aiMesh* Mesh, const aiScene* Scene)
 
 	for (uint32 j = 0; j < Mesh->mNumVertices; ++j)
 	{
-		FVector Vertex = FVector(Mesh->mVertices[j].x, Mesh->mVertices[j].y, Mesh->mVertices[j].z);
+		// Create vectors with the appropriate type based on UE version
+		FVector Vertex(Mesh->mVertices[j].x, Mesh->mVertices[j].y, Mesh->mVertices[j].z);
 		MeshData.Vertices.Add(Vertex);
+		
 		FVector Normal = FVector::ZeroVector;
-
 		if (Mesh->HasNormals())
 		{
 		    Normal = FVector(Mesh->mNormals[j].x, Mesh->mNormals[j].y, Mesh->mNormals[j].z);
 		}
 		MeshData.Normals.Add(Normal);
+		
 		if (Mesh->mTextureCoords[0])
 		{
+		#if WITH_UE_5_0
+			// UE 5.0+ uses double precision
+		    MeshData.UVs.Add(FVector2D(static_cast<double>(Mesh->mTextureCoords[0][j].x), 1.0-static_cast<double>(Mesh->mTextureCoords[0][j].y)));
+		#else
+			// UE 4.x uses single precision
 		    MeshData.UVs.Add(FVector2D(static_cast<float>(Mesh->mTextureCoords[0][j].x), 1.f-static_cast<float>(Mesh->mTextureCoords[0][j].y)));
+		#endif
 		}
 
 		if (Mesh->HasTangentsAndBitangents())
@@ -94,38 +121,91 @@ FFinalReturnData UMeshLoader::LoadMeshFromFile(FString FilePath, EPathType type)
 
 	if (FilePath.IsEmpty())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("Runtime Mesh Loader: filepath is empty.\n"));
+		UE_LOG(LogRuntimeMeshLoader, Warning, TEXT("Runtime Mesh Loader: filepath is empty.\n"));
 		return ReturnData;
 	}
 
-	std::string FinalFilePath;
-	switch (type)
+	// Check if the Assimp module is properly loaded
+	FRuntimeMeshLoaderModule& Module = FModuleManager::GetModuleChecked<FRuntimeMeshLoaderModule>("RuntimeMeshLoader");
+	if (!Module.DllHandle)
 	{
-	    case EPathType::Absolute:
-		    FinalFilePath = TCHAR_TO_UTF8(*FilePath);
-		    break;
-	    case EPathType::Relative:
-		    FinalFilePath = TCHAR_TO_UTF8(*FPaths::Combine(FPaths::ProjectContentDir(), FilePath));
-		    break;
+		UE_LOG(LogRuntimeMeshLoader, Error, TEXT("Runtime Mesh Loader: Assimp DLL not loaded! Mesh loading will fail."));
+		
+		// Try to manually load the DLL from various locations as a last resort
+		FString PluginDir = IPluginManager::Get().FindPlugin("RuntimeMeshLoader")->GetBaseDir();
+		TArray<FString> PossiblePaths;
+		
+		// Add potential DLL locations to check
+		PossiblePaths.Add(FPaths::Combine(PluginDir, TEXT("ThirdParty/assimp/bin/assimp-vc142-mt.dll")));
+		PossiblePaths.Add(FPaths::Combine(PluginDir, TEXT("Binaries/Win64/assimp-vc142-mt.dll")));
+		PossiblePaths.Add(FPaths::Combine(FPaths::ProjectDir(), TEXT("Binaries/Win64/assimp-vc142-mt.dll")));
+		
+		for (const FString& Path : PossiblePaths)
+		{
+			if (FPaths::FileExists(Path))
+			{
+				UE_LOG(LogRuntimeMeshLoader, Log, TEXT("Found Assimp DLL at %s, attempting to load..."), *Path);
+				Module.DllHandle = FPlatformProcess::GetDllHandle(*Path);
+				if (Module.DllHandle)
+				{
+					UE_LOG(LogRuntimeMeshLoader, Log, TEXT("Successfully loaded Assimp DLL from %s"), *Path);
+					break;
+				}
+			}
+		}
+		
+		// Still no DLL loaded? Return with error
+		if (!Module.DllHandle)
+		{
+			UE_LOG(LogRuntimeMeshLoader, Error, TEXT("Could not find or load Assimp DLL from any location. Mesh loading will fail."));
+			return ReturnData;
+		}
 	}
 
-	Assimp::Importer mImporter;
+	UE_LOG(LogRuntimeMeshLoader, Log, TEXT("Runtime Mesh Loader: Loading mesh from %s"), *FilePath);
 
-	const aiScene* Scene = mImporter.ReadFile(FinalFilePath.c_str(), aiProcess_Triangulate | aiProcess_MakeLeftHanded | aiProcess_CalcTangentSpace | aiProcess_GenSmoothNormals | aiProcess_OptimizeMeshes);
+	if(type == EPathType::Relative){
+		FString ProjectContentDir = FPaths::ProjectContentDir();
+		FilePath = FPaths::Combine(ProjectContentDir, FilePath);
+	}
 
-	if (Scene == nullptr)
+	UE_LOG(LogRuntimeMeshLoader, Log, TEXT("Runtime Mesh Loader: Absolute path is %s"), *FilePath);
+
+	if (!FPaths::FileExists(FilePath))
 	{
-		UE_LOG(LogTemp, Warning, TEXT("Runtime Mesh Loader: Read mesh file failure.\n"));
+		UE_LOG(LogRuntimeMeshLoader, Error, TEXT("Runtime Mesh Loader: File does not exist: %s"), *FilePath);
 		return ReturnData;
 	}
 
-	if (Scene->HasMeshes())
+	try
 	{
-		int NodeIndex = 0;
-		int* NodeIndexPtr = &NodeIndex;
-		ProcessNode(Scene->mRootNode, Scene, -1, NodeIndexPtr, &ReturnData);
+		Assimp::Importer Importer;
+		const aiScene* Scene = Importer.ReadFile(TCHAR_TO_ANSI(*FilePath), 
+			aiProcess_Triangulate | 
+			aiProcess_MakeLeftHanded |
+			aiProcess_CalcTangentSpace |
+			aiProcess_FlipUVs |
+			aiProcess_FlipWindingOrder);
+
+		if (!Scene || !Scene->HasMeshes())
+		{
+			UE_LOG(LogRuntimeMeshLoader, Error, TEXT("Runtime Mesh Loader: Failed to load mesh: %s. Error: %s"), 
+				*FilePath, 
+				UTF8_TO_TCHAR(Importer.GetErrorString()));
+			return ReturnData;
+		}
+
+		int CurrentIndex = 0;
+
+		ProcessNode(Scene->mRootNode, Scene, -1, &CurrentIndex, &ReturnData);
 
 		ReturnData.Success = true;
+	}
+	catch (const std::exception& e)
+	{
+		UE_LOG(LogRuntimeMeshLoader, Error, TEXT("Runtime Mesh Loader: Exception while loading mesh: %s. Error: %s"), 
+			*FilePath, 
+			UTF8_TO_TCHAR(e.what()));
 	}
 
 	return ReturnData;
@@ -157,54 +237,65 @@ TArray<FString> UMeshLoader::ListFolders(FString DirectoryPath)
 
 UTexture2D* UMeshLoader::LoadTexture2DFromFile(const FString& FullFilePath, bool& IsValid, int32& Width, int32& Height)
 {
-    IsValid = false;
+	IsValid = false;
 	UTexture2D* LoadedT2D = NULL;
 	
 	IImageWrapperModule& ImageWrapperModule = FModuleManager::LoadModuleChecked<IImageWrapperModule>(FName("ImageWrapper"));
-	
 	TSharedPtr<IImageWrapper> ImageWrapper = ImageWrapperModule.CreateImageWrapper(EImageFormat::PNG);
-
-	//Load From File
+	
 	TArray<uint8> RawFileData;
-	/*If you use lower unreal engine,for example the version is 4.20,you may get a error message in bulid,you should use The following code replace "TArray<uint8> RawFileData;"
-	const TArray<uint8>* UncompressedBGRA = NULL;*/
+	if (!FFileHelper::LoadFileToArray(RawFileData, *FullFilePath)) return NULL;
 	
-	if (!FFileHelper::LoadFileToArray(RawFileData, * FullFilePath)) 
-	{
-		return NULL;
-	}
-	
-	  
-	//Create T2D!
 	if (ImageWrapper.IsValid() && ImageWrapper->SetCompressed(RawFileData.GetData(), RawFileData.Num()))
-	{ 
+	{
 		TArray<uint8> UncompressedBGRA;
 		if (ImageWrapper->GetRaw(ERGBFormat::BGRA, 8, UncompressedBGRA))
 		{
 			LoadedT2D = UTexture2D::CreateTransient(ImageWrapper->GetWidth(), ImageWrapper->GetHeight(), PF_B8G8R8A8);
+			if (!LoadedT2D) return NULL;
 			
-			//Valid?
-			if (!LoadedT2D) 
-			{
-				return NULL;
-			}
-			
-			//Out!
+			//Out params
 			Width = ImageWrapper->GetWidth();
 			Height = ImageWrapper->GetHeight();
-			 
-			//Copy!
+			
+#if WITH_UE_5_5
+			// UE 5.5 uses a different API for texture update
+			FRHIResourceCreateInfo CreateInfo(TEXT("LoadTexture2DFromFile"));
+            FUpdateTextureRegion2D Region(0, 0, 0, 0, Width, Height);
+            
+            // Create an array with just one region
+            TArray<FUpdateTextureRegion2D> Regions;
+            Regions.Add(Region);
+            
+            // Update texture regions
+            LoadedT2D->UpdateTextureRegions(
+                0,                                  // MipIndex
+                1,                                  // Number of regions
+                Regions.GetData(),                  // Regions array
+                Width * 4,                          // Source pixel data pitch
+                4,                                  // Bytes per pixel
+                UncompressedBGRA.GetData(),         // Source data
+                nullptr                             // Completion callback
+            );
+#else
+  #if WITH_UE_5_0
+			// In UE 5.0-5.4, we need to use the GetPlatformData API
+			FTexture2DMipMap& Mip = LoadedT2D->GetPlatformData()->Mips[0];
+			void* Data = Mip.BulkData.Lock(LOCK_READ_WRITE);
+			FMemory::Memcpy(Data, UncompressedBGRA.GetData(), UncompressedBGRA.Num());
+			Mip.BulkData.Unlock();
+  #else
+			// Legacy UE 4.x code
 			void* TextureData = LoadedT2D->PlatformData->Mips[0].BulkData.Lock(LOCK_READ_WRITE);
 			FMemory::Memcpy(TextureData, UncompressedBGRA.GetData(), UncompressedBGRA.Num());
-			/*if you use the code"const TArray<uint8>* UncompressedBGRA = NULL;"，Accordingly, since UncompressedBGRA becomes a pointer, you need to use a pointer reference method, like this
-			FMemory::Memcpy(TextureData, UncompressedBGRA->GetData(), UncompressedBGRA->Num());*/
 			LoadedT2D->PlatformData->Mips[0].BulkData.Unlock();
-
-			//Update!
+  #endif
+			// Update the texture
 			LoadedT2D->UpdateResource();
+#endif
 		}
 	}
-	 
+	
 	// Success!
 	IsValid = true;
 	return LoadedT2D;

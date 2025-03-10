@@ -15,6 +15,16 @@ enum class EPathType : uint8
 	Relative
 };
 
+// Get the appropriate vector types based on UE version
+#if WITH_UE_5_0
+    // UE 5.0+ uses double precision vectors
+    #define FVectorCompat FVector3d
+    #define FVector2DCompat FVector2D
+#else
+    // UE 4.x uses single precision vectors
+    #define FVectorCompat FVector
+    #define FVector2DCompat FVector2D
+#endif
 
 USTRUCT(BlueprintType)
 struct FMeshData
@@ -35,6 +45,12 @@ struct FMeshData
 
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "FinalReturnData")
 	TArray<FProcMeshTangent> Tangents;
+    
+    // Default constructor to initialize arrays
+    FMeshData()
+    {
+        // Arrays are already default initialized
+    }
 };
 
 USTRUCT(BlueprintType)
@@ -46,10 +62,17 @@ struct FNodeData
 	FTransform RelativeTransformTransform;
 
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "FinalReturnData")
-	int NodeParentIndex;
+	int NodeParentIndex = -1;  // Initialize with -1 as default
 
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "FinalReturnData")
 	TArray<FMeshData> Meshes;
+    
+    // Default constructor
+    FNodeData() : NodeParentIndex(-1)
+    {
+        // RelativeTransformTransform is already default initialized
+        // Meshes array is already default initialized
+    }
 };
 
 USTRUCT(BlueprintType)
@@ -58,10 +81,16 @@ struct FFinalReturnData
     GENERATED_USTRUCT_BODY()
 
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "FinalReturnData")
-	bool Success;
+	bool Success = false;  // Initialize with false as default
 
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "FinalReturnData")
 	TArray<FNodeData> Nodes;
+    
+    // Default constructor
+    FFinalReturnData() : Success(false)
+    {
+        // Nodes array is already default initialized
+    }
 };
 
 /**

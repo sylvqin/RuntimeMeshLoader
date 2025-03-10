@@ -4,6 +4,9 @@
 
 #include "CoreMinimal.h"
 #include "Modules/ModuleManager.h"
+#include "Interfaces/IPluginManager.h"
+
+DECLARE_LOG_CATEGORY_EXTERN(LogRuntimeMeshLoader, Log, All);
 
 class FRuntimeMeshLoaderModule : public IModuleInterface
 {

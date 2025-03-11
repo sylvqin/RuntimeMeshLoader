@@ -35,49 +35,92 @@
 
 FMeshData ProcessMesh(aiMesh* Mesh, const aiScene* Scene)
 {
-    FMeshData MeshData;
-
-	for (uint32 j = 0; j < Mesh->mNumVertices; ++j)
-	{
-		// Create vectors with the appropriate type based on UE version
-		FVector Vertex(Mesh->mVertices[j].x, Mesh->mVertices[j].y, Mesh->mVertices[j].z);
+	FMeshData MeshData;
+	
+	// Vertices
+	for(unsigned int i = 0; i < Mesh->mNumVertices; i++)
+	{	
+		// Process vertex positions, normals, and UVs
+		FVector Vertex;
+		Vertex.X = Mesh->mVertices[i].x;
+		Vertex.Y = Mesh->mVertices[i].y;
+		Vertex.Z = Mesh->mVertices[i].z;
 		MeshData.Vertices.Add(Vertex);
 		
-		FVector Normal = FVector::ZeroVector;
-		if (Mesh->HasNormals())
+		// Normals
+		if(Mesh->HasNormals())
 		{
-		    Normal = FVector(Mesh->mNormals[j].x, Mesh->mNormals[j].y, Mesh->mNormals[j].z);
+			FVector Normal;
+			Normal.X = Mesh->mNormals[i].x;
+			Normal.Y = Mesh->mNormals[i].y;
+			Normal.Z = Mesh->mNormals[i].z;
+			MeshData.Normals.Add(Normal);
 		}
-		MeshData.Normals.Add(Normal);
+		else 
+		{
+            // Add a default normal if none exists
+            MeshData.Normals.Add(FVector(0.0f, 0.0f, 1.0f));
+		}
 		
-		if (Mesh->mTextureCoords[0])
+		// Texture Coordinates
+		if(Mesh->HasTextureCoords(0))  // Check if the mesh contains texture coordinates
 		{
-		#if WITH_UE_5_0
-			// UE 5.0+ uses double precision
-		    MeshData.UVs.Add(FVector2D(static_cast<double>(Mesh->mTextureCoords[0][j].x), 1.0-static_cast<double>(Mesh->mTextureCoords[0][j].y)));
-		#else
-			// UE 4.x uses single precision
-		    MeshData.UVs.Add(FVector2D(static_cast<float>(Mesh->mTextureCoords[0][j].x), 1.f-static_cast<float>(Mesh->mTextureCoords[0][j].y)));
-		#endif
+			// UVs might need adjusting depending on how the texture looks
+			FVector2D UV;
+			
+			// Standard UV mapping from Assimp
+			UV.X = Mesh->mTextureCoords[0][i].x;
+			UV.Y = 1.0f - Mesh->mTextureCoords[0][i].y; // Flip V coordinate for UE (1.0 - v)
+			
+			// Ensure UVs are properly normalized to 0-1 range
+			if (UV.X < 0.0f) UV.X = 0.0f;
+			if (UV.X > 1.0f) UV.X = 1.0f;
+			if (UV.Y < 0.0f) UV.Y = 0.0f;
+			if (UV.Y > 1.0f) UV.Y = 1.0f;
+			
+			MeshData.UVs.Add(UV);
 		}
-
-		if (Mesh->HasTangentsAndBitangents())
+		else
 		{
-			FProcMeshTangent Tangent = FProcMeshTangent(Mesh->mTangents[j].x, Mesh->mTangents[j].y, Mesh->mTangents[j].z);
-			MeshData.Tangents.Add(Tangent);
+			// If no texture coordinates are available, use a default UV mapping
+			MeshData.UVs.Add(FVector2D(0.0f, 0.0f));
+		}
+		
+		// Tangents
+		if(Mesh->HasTangentsAndBitangents())
+		{
+			FVector Tangent;
+			Tangent.X = Mesh->mTangents[i].x;
+			Tangent.Y = Mesh->mTangents[i].y;
+			Tangent.Z = Mesh->mTangents[i].z;
+			
+			FVector Bitangent;
+			Bitangent.X = Mesh->mBitangents[i].x;
+			Bitangent.Y = Mesh->mBitangents[i].y;
+			Bitangent.Z = Mesh->mBitangents[i].z;
+			
+			// Calculate the handedness value for the tangent by determining the sign of the cross product
+			float TangentW = (FVector::CrossProduct(Tangent, Bitangent).Dot(FVector(Mesh->mNormals[i].x, Mesh->mNormals[i].y, Mesh->mNormals[i].z)) < 0.0f) ? -1.0f : 1.0f;
+			
+			MeshData.Tangents.Add(FProcMeshTangent(Tangent, TangentW < 0.0f));
+		}
+		else
+		{
+			// Add default tangent if none exists
+			MeshData.Tangents.Add(FProcMeshTangent(FVector(1.0f, 0.0f, 0.0f), false));
 		}
 	}
-
-	UE_LOG(LogTemp, Log, TEXT("mNumFaces: %d"), Mesh->mNumFaces);
-	for (uint32 i = 0; i < Mesh->mNumFaces; i++)
+	
+	// Process indices (faces)
+	for(unsigned int i = 0; i < Mesh->mNumFaces; i++)
 	{
 		aiFace Face = Mesh->mFaces[i];
-		for (uint32 f = 0; f < Face.mNumIndices; f++)
+		for(unsigned int j = 0; j < Face.mNumIndices; j++)
 		{
-		    MeshData.Triangles.Add(Face.mIndices[f]);
+			MeshData.Triangles.Add(Face.mIndices[j]);
 		}
 	}
-
+	
 	return MeshData;
 }
 
@@ -177,15 +220,42 @@ FFinalReturnData UMeshLoader::LoadMeshFromFile(FString FilePath, EPathType type)
 		return ReturnData;
 	}
 
+	// Check for texture files
+	FString BaseName = FPaths::GetBaseFilename(FilePath);
+	FString Directory = FPaths::GetPath(FilePath);
+	
+	FString TexturePath = FPaths::Combine(Directory, BaseName + TEXT("_T.png"));
+	FString NormalPath = FPaths::Combine(Directory, BaseName + TEXT("_N.png"));
+	
+	UE_LOG(LogRuntimeMeshLoader, Log, TEXT("Looking for texture at: %s (Exists: %s)"), 
+		*TexturePath, FPaths::FileExists(TexturePath) ? TEXT("Yes") : TEXT("No"));
+	UE_LOG(LogRuntimeMeshLoader, Log, TEXT("Looking for normal map at: %s (Exists: %s)"), 
+		*NormalPath, FPaths::FileExists(NormalPath) ? TEXT("Yes") : TEXT("No"));
+
+	// Continue with existing code for loading the mesh
 	try
 	{
 		Assimp::Importer Importer;
-		const aiScene* Scene = Importer.ReadFile(TCHAR_TO_ANSI(*FilePath), 
-			aiProcess_Triangulate | 
-			aiProcess_MakeLeftHanded |
-			aiProcess_CalcTangentSpace |
-			aiProcess_FlipUVs |
-			aiProcess_FlipWindingOrder);
+		
+		// Configure importer for better UV handling
+		Importer.SetPropertyInteger(AI_CONFIG_PP_PTV_NORMALIZE, 1); // Normalize UVs
+		
+		// Modified processing flags to fix texture mapping issues
+		unsigned int Flags = 
+			aiProcess_Triangulate | 		// Convert all shapes to triangles
+			aiProcess_MakeLeftHanded |  	// Convert to UE coordinate system
+			aiProcess_CalcTangentSpace | 	// Create tangents
+			aiProcess_GenSmoothNormals | 	// Generate smooth normals
+			aiProcess_OptimizeMeshes | 		// Join similar meshes
+			aiProcess_ImproveCacheLocality | // Improve memory access for vertices
+			aiProcess_RemoveRedundantMaterials | // Remove duplicate materials
+			aiProcess_FixInfacingNormals;    // Fix normals pointing inward
+			
+		// Don't flip UVs if the texture appears incorrect
+		// aiProcess_FlipUVs |
+		
+		// Load the scene
+		const aiScene* Scene = Importer.ReadFile(TCHAR_TO_ANSI(*FilePath), Flags);
 
 		if (!Scene || !Scene->HasMeshes())
 		{
@@ -238,65 +308,94 @@ TArray<FString> UMeshLoader::ListFolders(FString DirectoryPath)
 UTexture2D* UMeshLoader::LoadTexture2DFromFile(const FString& FullFilePath, bool& IsValid, int32& Width, int32& Height)
 {
 	IsValid = false;
-	UTexture2D* LoadedT2D = NULL;
-	
-	IImageWrapperModule& ImageWrapperModule = FModuleManager::LoadModuleChecked<IImageWrapperModule>(FName("ImageWrapper"));
-	TSharedPtr<IImageWrapper> ImageWrapper = ImageWrapperModule.CreateImageWrapper(EImageFormat::PNG);
-	
-	TArray<uint8> RawFileData;
-	if (!FFileHelper::LoadFileToArray(RawFileData, *FullFilePath)) return NULL;
-	
-	if (ImageWrapper.IsValid() && ImageWrapper->SetCompressed(RawFileData.GetData(), RawFileData.Num()))
+	UTexture2D* LoadedTexture = nullptr;
+
+	// Check if file exists
+	if (!FPaths::FileExists(FullFilePath))
 	{
-		TArray<uint8> UncompressedBGRA;
-		if (ImageWrapper->GetRaw(ERGBFormat::BGRA, 8, UncompressedBGRA))
-		{
-			LoadedT2D = UTexture2D::CreateTransient(ImageWrapper->GetWidth(), ImageWrapper->GetHeight(), PF_B8G8R8A8);
-			if (!LoadedT2D) return NULL;
-			
-			//Out params
-			Width = ImageWrapper->GetWidth();
-			Height = ImageWrapper->GetHeight();
-			
-#if WITH_UE_5_5
-			// UE 5.5 uses a different API for texture update
-			FRHIResourceCreateInfo CreateInfo(TEXT("LoadTexture2DFromFile"));
-            FUpdateTextureRegion2D Region(0, 0, 0, 0, Width, Height);
-            
-            // Create an array with just one region
-            TArray<FUpdateTextureRegion2D> Regions;
-            Regions.Add(Region);
-            
-            // Update texture regions
-            LoadedT2D->UpdateTextureRegions(
-                0,                                  // MipIndex
-                1,                                  // Number of regions
-                Regions.GetData(),                  // Regions array
-                Width * 4,                          // Source pixel data pitch
-                4,                                  // Bytes per pixel
-                UncompressedBGRA.GetData(),         // Source data
-                nullptr                             // Completion callback
-            );
-#else
-  #if WITH_UE_5_0
-			// In UE 5.0-5.4, we need to use the GetPlatformData API
-			FTexture2DMipMap& Mip = LoadedT2D->GetPlatformData()->Mips[0];
-			void* Data = Mip.BulkData.Lock(LOCK_READ_WRITE);
-			FMemory::Memcpy(Data, UncompressedBGRA.GetData(), UncompressedBGRA.Num());
-			Mip.BulkData.Unlock();
-  #else
-			// Legacy UE 4.x code
-			void* TextureData = LoadedT2D->PlatformData->Mips[0].BulkData.Lock(LOCK_READ_WRITE);
-			FMemory::Memcpy(TextureData, UncompressedBGRA.GetData(), UncompressedBGRA.Num());
-			LoadedT2D->PlatformData->Mips[0].BulkData.Unlock();
-  #endif
-			// Update the texture
-			LoadedT2D->UpdateResource();
-#endif
-		}
+		UE_LOG(LogRuntimeMeshLoader, Error, TEXT("Texture file not found: %s"), *FullFilePath);
+		return nullptr;
+	}
+
+	UE_LOG(LogRuntimeMeshLoader, Log, TEXT("Attempting to load texture from: %s"), *FullFilePath);
+
+	// Load the compressed bytes
+	TArray<uint8> FileData;
+	if (!FFileHelper::LoadFileToArray(FileData, *FullFilePath))
+	{
+		UE_LOG(LogRuntimeMeshLoader, Error, TEXT("Failed to load texture file to array: %s"), *FullFilePath);
+		return nullptr;
+	}
+
+	// Get an image wrapper for the file type
+	IImageWrapperModule& ImageWrapperModule = FModuleManager::LoadModuleChecked<IImageWrapperModule>(FName("ImageWrapper"));
+	// Detect the image type using the file extension
+	EImageFormat DetectedFormat = EImageFormat::Invalid;
+	
+	if (FullFilePath.EndsWith(".png", ESearchCase::IgnoreCase))
+	{
+		DetectedFormat = EImageFormat::PNG;
+	}
+	else if (FullFilePath.EndsWith(".jpg", ESearchCase::IgnoreCase) || FullFilePath.EndsWith(".jpeg", ESearchCase::IgnoreCase))
+	{
+		DetectedFormat = EImageFormat::JPEG;
+	}
+	else if (FullFilePath.EndsWith(".bmp", ESearchCase::IgnoreCase))
+	{
+		DetectedFormat = EImageFormat::BMP;
 	}
 	
-	// Success!
+	if (DetectedFormat == EImageFormat::Invalid)
+	{
+		UE_LOG(LogRuntimeMeshLoader, Error, TEXT("Unsupported texture format for file: %s"), *FullFilePath);
+		return nullptr;
+	}
+
+	TSharedPtr<IImageWrapper> ImageWrapper = ImageWrapperModule.CreateImageWrapper(DetectedFormat);
+
+	if (!ImageWrapper.IsValid())
+	{
+		UE_LOG(LogRuntimeMeshLoader, Error, TEXT("Failed to create image wrapper for format: %d"), (int32)DetectedFormat);
+		return nullptr;
+	}
+
+	if (!ImageWrapper->SetCompressed(FileData.GetData(), FileData.Num()))
+	{
+		UE_LOG(LogRuntimeMeshLoader, Error, TEXT("Failed to set compressed data for image: %s"), *FullFilePath);
+		return nullptr;
+	}
+
+	// Get the raw RGB data
+	TArray<uint8> RawData;
+	if (!ImageWrapper->GetRaw(ERGBFormat::BGRA, 8, RawData))
+	{
+		UE_LOG(LogRuntimeMeshLoader, Error, TEXT("Failed to get raw image data: %s"), *FullFilePath);
+		return nullptr;
+	}
+
+	// Create the texture
+	Width = ImageWrapper->GetWidth();
+	Height = ImageWrapper->GetHeight();
+
+	UE_LOG(LogRuntimeMeshLoader, Log, TEXT("Texture dimensions: %d x %d"), Width, Height);
+
+	LoadedTexture = UTexture2D::CreateTransient(Width, Height, PF_B8G8R8A8);
+
+	if (!LoadedTexture)
+	{
+		UE_LOG(LogRuntimeMeshLoader, Error, TEXT("Failed to create transient texture"));
+		return nullptr;
+	}
+
+	// Lock the texture for mip-level 0
+	void* TextureData = LoadedTexture->GetPlatformData()->Mips[0].BulkData.Lock(LOCK_READ_WRITE);
+	FMemory::Memcpy(TextureData, RawData.GetData(), RawData.Num());
+	LoadedTexture->GetPlatformData()->Mips[0].BulkData.Unlock();
+
+	// Update the texture
+	LoadedTexture->UpdateResource();
+
 	IsValid = true;
-	return LoadedT2D;
+	UE_LOG(LogRuntimeMeshLoader, Log, TEXT("Successfully loaded texture: %s"), *FullFilePath);
+	return LoadedTexture;
 }

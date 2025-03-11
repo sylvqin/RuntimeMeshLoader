@@ -47,10 +47,7 @@ struct FMeshData
 	TArray<FProcMeshTangent> Tangents;
     
     // Default constructor to initialize arrays
-    FMeshData()
-    {
-        // Arrays are already default initialized
-    }
+    FMeshData() { }
 };
 
 USTRUCT(BlueprintType)
@@ -62,17 +59,13 @@ struct FNodeData
 	FTransform RelativeTransformTransform;
 
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "FinalReturnData")
-	int NodeParentIndex = -1;  // Initialize with -1 as default
-
+	int NodeParentIndex;
+    
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "FinalReturnData")
 	TArray<FMeshData> Meshes;
     
-    // Default constructor
-    FNodeData() : NodeParentIndex(-1)
-    {
-        // RelativeTransformTransform is already default initialized
-        // Meshes array is already default initialized
-    }
+    // Default constructor with initialization
+    FNodeData() : NodeParentIndex(-1) { }
 };
 
 USTRUCT(BlueprintType)
@@ -81,16 +74,13 @@ struct FFinalReturnData
     GENERATED_USTRUCT_BODY()
 
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "FinalReturnData")
-	bool Success = false;  // Initialize with false as default
-
+	bool Success;
+    
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "FinalReturnData")
 	TArray<FNodeData> Nodes;
     
-    // Default constructor
-    FFinalReturnData() : Success(false)
-    {
-        // Nodes array is already default initialized
-    }
+    // Default constructor with initialization
+    FFinalReturnData() : Success(false) { }
 };
 
 /**
@@ -101,6 +91,7 @@ class RUNTIMEMESHLOADER_API UMeshLoader : public UBlueprintFunctionLibrary
 {
 	GENERATED_BODY()
 
+public:
 	UFUNCTION(BlueprintCallable,Category="RuntimeMeshLoader")
 	static FFinalReturnData LoadMeshFromFile(FString FilePath, EPathType type = EPathType::Absolute);
 

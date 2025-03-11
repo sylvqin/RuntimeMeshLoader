@@ -11,6 +11,7 @@ RuntimeMeshLoader (RML) uses [Assimp](https://github.com/assimp/assimp) as a thi
 * [Supported Unreal Engine versions](#supported-unreal-engine-versions)
 * [Installation](#installation)
 * [DLL Management](#dll-management)
+* [Recent Updates](#recent-updates)
 * [How-to](#how-to)
 * [Troubleshooting](#troubleshooting)
 * [Limitations](#limitations)
@@ -49,6 +50,42 @@ The plugin relies on the Assimp library, which is distributed as a DLL file. For
 
 The plugin also contains code to handle various DLL loading situations and will attempt to find the DLL in different locations if the primary location fails.
 
+## Recent Updates
+
+### Texture Loading Improvements (March 2025)
+
+The plugin has been enhanced with the following improvements:
+
+1. **Enhanced Texture Loading**: The texture loading system has been improved to provide better error handling and more detailed logs about texture loading failures.
+
+2. **RuntimeMeshLoaderHelper class**: A new helper class has been added that simplifies loading meshes with textures in one step. Example usage:
+
+   ```cpp
+   // C++ example
+   UProceduralMeshComponent* MeshComponent = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("ProceduralMesh"));
+   URuntimeMeshLoaderHelper::LoadMeshWithTextures(MeshComponent, FilePath, EPathType::Absolute, FVector(0.01f, 0.01f, 0.01f));
+   ```
+
+   For Blueprint users:
+   ```
+   Get Procedural Mesh Component -> LoadMeshWithTextures(FilePath, EPathType::Absolute, Scale)
+   ```
+
+3. **Scale Correction**: The helper automatically ensures your meshes don't have zero scale values, fixing the common "Scale has a component set to zero" warning.
+
+4. **Automatic Material Creation**: Enhanced algorithm for finding or creating appropriate materials for your loaded meshes.
+
+5. **Support for More Texture Formats**: Added support for JPEG and BMP textures in addition to PNG.
+
+### Compile from Source
+
+If you want to compile the latest changes from source:
+
+1. Close Unreal Engine
+2. Delete the Binaries, Intermediate, and Saved folders from the plugin directory
+3. Reopen your project in Unreal Engine
+4. Click "Yes" when prompted to rebuild the plugin
+
 ## How-to
 The plugin can be used in many ways. You could create a file-dialogue for the user to select assets to be loaded, or load assets from a pre-defined folder, or any other creative way.
 
@@ -61,6 +98,16 @@ If you load up the plugin for the first time, the folder will be empty. As an ex
 1. Create a blueprint and add a function call to `LoadMeshFromFile`
 2. Provide the file path to your 3D model
 3. Use the returned mesh data to create or update procedural mesh components
+
+### Using the Helper Class (Recommended)
+
+For easier mesh loading with textures:
+
+1. Create a blueprint that needs to load a mesh
+2. Add a Procedural Mesh Component
+3. Call `LoadMeshWithTextures` from the RuntimeMeshLoaderHelper class
+4. Pass in your procedural mesh component, file path, and desired scale
+5. The helper handles textures, materials, and scale issues automatically
 
 ## Troubleshooting
 
@@ -83,6 +130,11 @@ If you load up the plugin for the first time, the folder will be empty. As an ex
 
 4. **UE5.5 compatibility issues**:
    - This version has been specifically updated for UE 5.5, but if you encounter API-related errors, check the Unreal Engine release notes for any deprecated functions
+
+5. **Missing textures or material issues**:
+   - Verify that your texture files follow the naming convention: ModelName_T.png and ModelName_N.png
+   - Check the Output Log for messages about texture loading attempts
+   - Use the new LoadMeshWithTextures helper function which provides better automatic material creation
 
 ## Limitations
 - Only PNG-formats can be loaded for textures. JPG is currently not supported.
